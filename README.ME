@@ -1,0 +1,24 @@
+可以使用以下命令进行测试：
+
+1. 验证 MySQL 主从复制
+进入 Slave Pod 查看复制状态：
+
+bash
+kubectl exec -it $(kubectl get pod -l app=mysql-slave -o jsonpath="{.items[0].metadata.name}") -- mysql -u root -prootpassword -e "SHOW SLAVE STATUS\G"
+确保输出中包含：
+
+Slave_IO_Running: Yes
+Slave_SQL_Running: Yes
+2. 验证 RabbitMQ 日志传输
+查看 RabbitMQ 队列中的消息数（Log Shipper 应该已经发送了消息）：
+
+bash
+kubectl exec $(kubectl get pod -l app=rabbitmq -o jsonpath="{.items[0].metadata.name}") -- rabbitmqctl list_queues
+你应该能看到 retry_logs 队列中有消息（例如 retry_logs 63）。
+
+3. (可选) 查看 RabbitMQ 管理界面
+如果你想在浏览器中查看：
+
+bash
+kubectl port-forward svc/rabbitmq 15672:15672
+访问 http://localhost:15672 (用户: user, 密码: password)，在 Queues 页面查看 retry_logs。
