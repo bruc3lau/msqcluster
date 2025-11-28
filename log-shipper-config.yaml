@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: log-shipper-config
+data:
+  shipper.py: |
+    import time
+    import pika
+    import os
+
+    LOG_FILE = "/var/log/mysql/retry.log"
+    RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
+    QUEUE_NAME = "retry_logs"
+
+    def connect_rabbitmq():
+        credentials = pika.PlainCredentials('user', 'password')
+        while True:
+            try:
+                connection = pika.BlockingConnection(
+                    pika.ConnectionParameters(host=RABBITMQ_HOST, credentials=credentials))
+                channel = connection.channel()
+                channel.queue_declare(queue=QUEUE_NAME)
+                print("Connected to RabbitMQ")
+                return channel
+            except Exception as e:
+                print(f"Waiting for RabbitMQ... {e}")
+                time.sleep(5)
+
+    def tail_f(filename):
+        # Create file if not exists
+        if not os.path.exists(filename):
+            open(filename, 'a').close()
+        
+        f = open(filename, 'r')
+        f.seek(0, 2) # Go to the end
+        while True:
+            line = f.readline()
+            if not line:
+                time.sleep(0.1)
+                continue
+            yield line
+
+    if __name__ == "__main__":
+        channel = connect_rabbitmq()
+        print(f"Tailing {LOG_FILE}...")
+        for line in tail_f(LOG_FILE):
+            try:
+                channel.basic_publish(exchange='', routing_key=QUEUE_NAME, body=line)
+                print(f"Sent: {line.strip()}")
+            except Exception as e:
+                print(f"Error sending message: {e}")
+                channel = connect_rabbitmq()

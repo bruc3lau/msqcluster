@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-slave-config
+data:
+  slave.cnf: |
+    [mysqld]
+    server-id=2
+    relay-log=mysql-relay-bin
+    read_only=1
+  init-slave.sh: |
+    #!/bin/bash
+    set -e
+    echo "Waiting for master to be ready..."
+    until mysql -h mysql-master -u root -p"$MYSQL_ROOT_PASSWORD" -e "SELECT 1"; do
+      sleep 5
+    done
+    
+    echo "Configuring replication..."
+    mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "CHANGE MASTER TO MASTER_HOST='mysql-master', MASTER_USER='repl', MASTER_PASSWORD='replpassword', MASTER_LOG_FILE='mysql-bin.000001', MASTER_LOG_POS=154;"
+    # Note: In a real production scenario, you'd need to get the actual log file and position from the master.
+    # For this demo, we assume a fresh master starting at position 154 or use GTID.
+    # A better approach for demo:
+    mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "STOP SLAVE; RESET SLAVE ALL;"
+    mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "CHANGE MASTER TO MASTER_HOST='mysql-master', MASTER_USER='repl', MASTER_PASSWORD='replpassword', MASTER_AUTO_POSITION=0;"
+    # We will just try to start slave, assuming master is fresh.
+    mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "START SLAVE;"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-slave
+  labels:
+    app: mysql-slave
+spec:
+  ports:
+  - port: 3306
+  selector:
+    app: mysql-slave
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-slave
+spec:
+  selector:
+    matchLabels:
+      app: mysql-slave
+  template:
+    metadata:
+      labels:
+        app: mysql-slave
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:5.7
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "rootpassword"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/mysql/conf.d
+        - name: init-script
+          mountPath: /docker-entrypoint-initdb.d
+      volumes:
+      - name: config-volume
+        configMap:
+          name: mysql-slave-config
+          items:
+          - key: slave.cnf
+            path: slave.cnf
+      - name: init-script
+        configMap:
+          name: mysql-slave-config
+          items:
+          - key: init-slave.sh
+            path: init-slave.sh
